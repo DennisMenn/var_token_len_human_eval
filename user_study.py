@@ -9,15 +9,16 @@ import uuid
 import time
 import datetime
 import json
+import pandas as pd
 
-from google.oauth2 import service_account
-from googleapiclient.discovery import build
-from googleapiclient.http import MediaIoBaseUpload, MediaInMemoryUpload
+from st_files_connection import FilesConnection
 
 # --- Configuration ---
 VIDEO_BASE_PATH = "videos/test"
 INPUT_VIDEO_PATH = "davis_eval_proc"
 OUR_METHOD_NAME = "prune0.149" 
+GCS_BUCKET_NAME = "streamlit-human-eval-bucket"
+conn = st.connection('gcs', type=FilesConnection)
 
 BASELINE_FOLDERS = {
     "no_prune": "no_prune",
@@ -26,7 +27,6 @@ BASELINE_FOLDERS = {
     # "controlvideo": "ControlVideo_Outputs"
 }
 
-RESPONSE_FILE_NAME = "results"
 PROMPT_PATH = "eval_prune.json"
 with open(PROMPT_PATH, 'r') as f:
         prompts_json = json.load(f) 
@@ -142,53 +142,7 @@ def get_comparison_pairs(group_id, seed=0):
     pairs.sort(key=lambda x: x['filename'])
     return pairs
 
-def get_gdrive_service():
-    scope = ['https://www.googleapis.com/auth/drive']
-    
-    # Load the string from secrets and convert it back to a dictionary
-    creds_info = json.loads(st.secrets["gdrive_json_string"])
-    
-    creds = service_account.Credentials.from_service_account_info(creds_info, scopes=scope)
-    return build('drive', 'v3', credentials=creds)
-
-def save_result_to_gdrive(caption, baseline_method, chosen_method, file_name):
-    """
-    Original signature preserved. 
-    Instead of local storage, it uploads to Google Drive.
-    """
-    # 1. Authenticate using the string-based secret we discussed
-    service = get_gdrive_service()
-
-    # 2. Create the CSV data in memory
-    output = io.StringIO()
-    fieldnames = ["Caption", "Baseline_Method", "Chosen_Method"]
-    writer = csv.DictWriter(output, fieldnames=fieldnames)
-    
-    # We write the header because we are creating a unique file per user/session
-    writer.writeheader()
-    writer.writerow({
-        "Caption": caption,
-        "Baseline_Method": baseline_method,
-        "Chosen_Method": chosen_method
-    })
-    
-    csv_content = output.getvalue()
-
-    # 3. Upload to Google Drive
-    # We use your 'file_name' variable as the name of the file in Drive
-    file_metadata = {
-        'name': os.path.basename(file_name), # Extracts just the filename from the path
-        'parents': [DRIVE_FOLDER_ID]
-    }
-    
-    media = MediaInMemoryUpload(csv_content.encode('utf-8'), mimetype='text/csv')
-    
-    try:
-        service.files().create(body=file_metadata, media_body=media, fields='id').execute()
-    except Exception as e:
-        st.error(f"Failed to save to Drive: {e}")
-
-def save_result(caption, baseline_method, chosen_method, file_name):
+# def save_result(caption, baseline_method, chosen_method, file_name):
     parent_folder = os.path.dirname(file_name)
 
     if parent_folder:  
@@ -205,6 +159,36 @@ def save_result(caption, baseline_method, chosen_method, file_name):
             "Baseline_Method": baseline_method,
             "Chosen_Method": chosen_method
         })
+
+def save_result(caption, baseline_method, chosen_method, file_name):
+    full_gcs_path = f"{GCS_BUCKET_NAME}/{file_name}"
+    
+    # 1. Create the new row as a DataFrame
+    new_data = pd.DataFrame([{
+        "Caption": caption,
+        "Baseline_Method": baseline_method,
+        "Chosen_Method": chosen_method
+    }])
+
+    # 2. Try to read the existing CSV
+    try:
+        # CRITICAL: ttl=0 ensures we fetch the latest file, not a cached version
+        existing_df = conn.read(full_gcs_path, input_format="csv", ttl=0)
+        
+        # Concatenate old data with new data
+        updated_df = pd.concat([existing_df, new_data], ignore_index=True)
+        
+    except Exception:
+        # If file not found (or empty), start fresh with just the new data
+        updated_df = new_data
+
+    # 3. Write the combined DataFrame back to GCS
+    try:
+        # We still use conn.open with 'wt' (write text) to save the file
+        with conn.open(full_gcs_path, mode='wt') as f:
+            updated_df.to_csv(f, index=False)
+    except Exception as e:
+        st.error(f"Failed to save to GCS: {e}")
 
 def show_landing_page():
     st.markdown("""
@@ -228,6 +212,8 @@ def show_landing_page():
     
     INSTRUCTIONS = """
     ### Instructions
+    :red[Please read the instructions carefully before starting.]
+
     We use AI models to edit source videos based on provided prompts. Given two edited videos, please select the one you prefer.
 
     Your judgment should base on the following criteria:
@@ -236,9 +222,11 @@ def show_landing_page():
     * **Prompt Alignment:** How well the edited video matches the given prompt.
     * **Motion Fidelity:** How well the motion matches the source video.
 
-    * **Note:** If these factors contradict each other, please **prioritize video quality**, as the result must be a functional video first.
+    **Note:** If these factors contradict each other, please **prioritize video quality**, as the result must be a functional video first.
 
     After reviewing both videos, select your preferred option or choose **"Draw"** if you cannot decide which one is better.
+
+    Please use a desktop or laptop to complete this evaluation.
 
     Click **"Start Evaluation"** to begin.
     """
@@ -249,6 +237,7 @@ def show_landing_page():
     # Using a form creates a better UI feel (users can hit Enter or click the button)
     with st.form("login_form"):
         user_input = st.text_input("Enter your test ID:")
+        user_name = st.text_input("Enter your name")
         submitted = st.form_submit_button("Start Evaluation")
 
         if submitted:
@@ -256,12 +245,13 @@ def show_landing_page():
             # .strip() removes accidental spaces
             clean_input = user_input.strip()
 
-            if clean_input in ID_MAPPING:
+            if clean_input in ID_MAPPING and user_name.strip() != "":
                 st.session_state.test_id = ID_MAPPING[clean_input]
+                st.session_state.user_name = user_name.strip()
                 st.session_state.page_index = 1
                 st.rerun()
             else:
-                st.error("Invalid Test ID. Please try again.")
+                st.error("Invalid Test ID or Name. Please try again.")
 
 # --- Main App ---
 
@@ -277,19 +267,19 @@ def main():
                 }
         </style>
         """, unsafe_allow_html=True)
-    
-    if "user_session_id" not in st.session_state:
-        timestamp = time.time()
-        dt_object = datetime.datetime.fromtimestamp(timestamp)
-        readable_date = dt_object.strftime("%Y-%m-%d_%H-%M-%S")
-        rand_suffix = uuid.uuid4().hex[:4]
-        st.session_state.user_session_id = f"{readable_date}_{rand_suffix}"
 
     if st.session_state.get('page_index', 0) == 0:
         show_landing_page()
         return
     
     st.title("Video Comparison Study")   
+
+    if "user_session_id" not in st.session_state:
+        timestamp = time.time()
+        dt_object = datetime.datetime.fromtimestamp(timestamp)
+        readable_date = dt_object.strftime("%Y-%m-%d_%H-%M-%S")
+        user_name = st.session_state.get('user_name', '').replace(" ", "_")
+        st.session_state.user_session_id = f"{readable_date}_{user_name}"
 
     if "task_index" not in st.session_state:
         st.session_state.task_index = 0
@@ -308,6 +298,8 @@ def main():
                 del st.session_state["page_index"]
             if "test_id" in st.session_state:
                 del st.session_state["test_id"]
+            if "user_name" in st.session_state:
+                del st.session_state["user_name"]
             st.rerun()
         return
 
@@ -371,7 +363,7 @@ def main():
                 elif choice == "Video A": winner = name_a
                 else: winner = name_b
                 
-                file_name = os.path.join(RESPONSE_FILE_NAME, f"testID{st.session_state.test_id}_" + st.session_state.user_session_id + ".csv")
+                file_name = f"testID{st.session_state.test_id}_" + st.session_state.user_session_id + ".csv"
                 save_result(current_pair['caption'], current_pair['baseline_name'], winner, file_name)
                 st.toast(f"Saved! Winner: {winner}")
                 
