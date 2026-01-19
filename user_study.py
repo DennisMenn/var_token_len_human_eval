@@ -214,9 +214,7 @@ def show_landing_page():
     ### Instructions
     :red[Please read the instructions carefully before starting.]
 
-    We use AI models to edit source videos based on provided prompts. Given two edited videos, please select the one you prefer.
-
-    Your judgment should base on the following criteria:
+    We use AI models to edit source videos based on provided prompts. Given two edited videos, please select the one you think has better quality based on the following criteria:
 
     * **Edited Video Quality:** e.g. Smoothness of frames, consistency of content, and per frame (image) quality.
     * **Prompt Alignment:** How well the edited video matches the given prompt.
