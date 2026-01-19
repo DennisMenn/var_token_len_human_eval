@@ -1,6 +1,7 @@
+import os
+import io
 import streamlit as st
 import streamlit.components.v1 as components
-import os
 import random
 import csv
 import base64
@@ -8,6 +9,10 @@ import uuid
 import time
 import datetime
 import json
+
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaIoBaseUpload, MediaInMemoryUpload
 
 # --- Configuration ---
 VIDEO_BASE_PATH = "videos/official"
@@ -86,22 +91,6 @@ def render_video_iframe(filepath, placeholder_obj):
     with placeholder_obj:
         components.html(html_content, height=320, width=555, scrolling=False)
 
-# def get_source_video(output_filename):
-#     if not os.path.exists(INPUT_VIDEO_PATH):
-#         return None
-#     source_files = [f for f in os.listdir(INPUT_VIDEO_PATH) if f.endswith(".mp4")]
-#     source_files.sort(key=len, reverse=True)
-#     for source in source_files:
-#         source_stem = os.path.splitext(source)[0]
-#         if output_filename.startswith(source_stem + "_"):
-#             return os.path.abspath(os.path.join(INPUT_VIDEO_PATH, source))
-#     return None
-
-
-# def get_source_video(output_filename):
-
-#     return os.path.join("/home/dym349/experiment/Self-Forcing/eval/other_models/videos/test", output_filename)
-
 def get_comparison_pairs(group_id, seed=0):
     pairs = []
     ours_path_root = os.path.join(VIDEO_BASE_PATH, OUR_METHOD_NAME)
@@ -152,6 +141,52 @@ def get_comparison_pairs(group_id, seed=0):
     
     pairs.sort(key=lambda x: x['filename'])
     return pairs
+
+def get_gdrive_service():
+    scope = ['https://www.googleapis.com/auth/drive']
+    
+    # Load the string from secrets and convert it back to a dictionary
+    creds_info = json.loads(st.secrets["gdrive_json_string"])
+    
+    creds = service_account.Credentials.from_service_account_info(creds_info, scopes=scope)
+    return build('drive', 'v3', credentials=creds)
+
+def save_result_to_gdrive(caption, baseline_method, chosen_method, file_name):
+    """
+    Original signature preserved. 
+    Instead of local storage, it uploads to Google Drive.
+    """
+    # 1. Authenticate using the string-based secret we discussed
+    service = get_gdrive_service()
+
+    # 2. Create the CSV data in memory
+    output = io.StringIO()
+    fieldnames = ["Caption", "Baseline_Method", "Chosen_Method"]
+    writer = csv.DictWriter(output, fieldnames=fieldnames)
+    
+    # We write the header because we are creating a unique file per user/session
+    writer.writeheader()
+    writer.writerow({
+        "Caption": caption,
+        "Baseline_Method": baseline_method,
+        "Chosen_Method": chosen_method
+    })
+    
+    csv_content = output.getvalue()
+
+    # 3. Upload to Google Drive
+    # We use your 'file_name' variable as the name of the file in Drive
+    file_metadata = {
+        'name': os.path.basename(file_name), # Extracts just the filename from the path
+        'parents': [DRIVE_FOLDER_ID]
+    }
+    
+    media = MediaInMemoryUpload(csv_content.encode('utf-8'), mimetype='text/csv')
+    
+    try:
+        service.files().create(body=file_metadata, media_body=media, fields='id').execute()
+    except Exception as e:
+        st.error(f"Failed to save to Drive: {e}")
 
 def save_result(caption, baseline_method, chosen_method, file_name):
     parent_folder = os.path.dirname(file_name)
