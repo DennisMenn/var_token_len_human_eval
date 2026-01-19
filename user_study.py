@@ -14,7 +14,7 @@ import pandas as pd
 from st_files_connection import FilesConnection
 
 # --- Configuration ---
-VIDEO_BASE_PATH = "videos/test"
+VIDEO_BASE_PATH = "videos/official"
 INPUT_VIDEO_PATH = "davis_eval_proc"
 OUR_METHOD_NAME = "prune0.149" 
 GCS_BUCKET_NAME = "streamlit-human-eval-bucket"
@@ -22,9 +22,9 @@ conn = st.connection('gcs', type=FilesConnection)
 
 BASELINE_FOLDERS = {
     "no_prune": "no_prune",
-    # "streamv2v": "StreamV2V_Processed_Outputs",
-    # "streamdiffusion": "StreamDiffusion_Processed_Outputs",
-    # "controlvideo": "ControlVideo_Outputs"
+    "streamv2v": "StreamV2V_Processed_Outputs",
+    "streamdiffusion": "StreamDiffusion_Processed_Outputs",
+    "controlvideo": "ControlVideo_Outputs"
 }
 
 PROMPT_PATH = "eval_prune.json"
@@ -347,7 +347,7 @@ def main():
 
     # 7. Voting Form
     with st.form("voting_form"):        
-        st.markdown("#### Imagine you used an AI model to edit the source video based on the prompt. You received these two results, Video A and Video B. Which one are you more likely to accept? \n (Key Considerations: Video Quality, Prompt Alignment, and Motion Fidelity to source video)")
+        st.markdown("#### Imagine you used an AI model to edit the source video based on the prompt. You received these two results, Video A and Video B. Which one would you more likely to accept? \n (Key Considerations: Video Quality, Prompt Alignment, and Motion Fidelity to source video)")
         
         left, middle, right = st.columns([1, 2, 1])
 
