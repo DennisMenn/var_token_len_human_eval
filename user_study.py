@@ -15,15 +15,15 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload, MediaInMemoryUpload
 
 # --- Configuration ---
-VIDEO_BASE_PATH = "videos/official"
+VIDEO_BASE_PATH = "videos/test"
 INPUT_VIDEO_PATH = "davis_eval_proc"
 OUR_METHOD_NAME = "prune0.149" 
 
 BASELINE_FOLDERS = {
     "no_prune": "no_prune",
-    "streamv2v": "StreamV2V_Processed_Outputs",
-    "streamdiffusion": "StreamDiffusion_Processed_Outputs",
-    "controlvideo": "ControlVideo_Outputs"
+    # "streamv2v": "StreamV2V_Processed_Outputs",
+    # "streamdiffusion": "StreamDiffusion_Processed_Outputs",
+    # "controlvideo": "ControlVideo_Outputs"
 }
 
 RESPONSE_FILE_NAME = "results"
